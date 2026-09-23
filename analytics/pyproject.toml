@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "money-graph"
 version = "0.1.0"
-description = "Local Money Graph analytics CLI scaffold"
+description = "Local explainable Money Graph batch analytics CLI"
 requires-python = ">=3.12"
 dependencies = [
     "pandas==3.0.6",
