@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from fractions import Fraction
 from math import isfinite, log
 
 import networkx as nx
@@ -64,7 +65,13 @@ def classify(node: dict, features: dict, config: RulesConfig = DEFAULT_CONFIG) -
         strength = (min(out / (2 * config.distributor_out), 1) + 1 - inc / out) / 2
         role, score = "distributor", 0.4 + 0.5 * strength
         evidence = f"Признаки распределения: выход={out} ≥ {config.distributor_out} и ≥{config.fan_dominance}×вход={inc}. Внешние источники средств неизвестны."
-    elif not seed and interior and incoming > 0 and outgoing > 0 and config.transit_ratio_low <= ratio <= config.transit_ratio_high:
+    elif (
+        not seed and interior and incoming > 0 and outgoing > 0
+        # Role membership uses exact tiyn and decimal policy thresholds, not
+        # the rounded JSON ratio (which can hide a one-tiyn boundary crossing).
+        and Fraction(str(config.transit_ratio_low)) * incoming <= outgoing
+        and outgoing <= Fraction(str(config.transit_ratio_high)) * incoming
+    ):
         tolerance = 1 - config.transit_ratio_low if ratio <= 1 else config.transit_ratio_high - 1
         closeness = 1 - abs(ratio - 1) / tolerance
         role, score = "transit", 0.35 + 0.30 * max(0, closeness)

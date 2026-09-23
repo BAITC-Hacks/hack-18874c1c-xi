@@ -5,7 +5,7 @@ No float arithmetic, implicit ID/date coercion, or transaction deduplication is
 performed. The resulting records are sorted independently of Parquet row order.
 """
 
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -129,6 +129,27 @@ def _date(value: object, label: str) -> date:
     raise InputError(f"{label}: ожидается календарная дата, без угадывания формата")
 
 
+def _validate_discovery_depth(nodes: dict[int, dict], edges: dict[tuple[int, int], dict]) -> None:
+    """Verify the actual minimum outgoing hop from any seed, in O(V + E)."""
+    successors: dict[int, list[int]] = defaultdict(list)
+    for src, dst in edges:
+        successors[src].append(dst)
+    distances = {gid: 0 for gid, node in nodes.items() if node["is_seed"]}
+    pending = deque(distances)
+    while pending:
+        src = pending.popleft()
+        for dst in successors.get(src, ()):
+            if dst not in distances:
+                distances[dst] = distances[src] + 1
+                pending.append(dst)
+    for gid, node in nodes.items():
+        if gid not in distances:
+            raise InputError(f"nodes.parquet: gid {gid} недостижим по исходящим рёбрам ни от одного seed")
+        if node["depth"] != distances[gid]:
+            raise InputError(f"nodes.parquet: gid {gid}, depth={node['depth']} не совпадает "
+                             f"с минимальным числом исходящих шагов от seeds: {distances[gid]}")
+
+
 def load_inputs(input_dir: Path) -> InputData:
     """Read and validate inputs; never write outputs or discard input records."""
     input_dir = Path(input_dir)
@@ -177,6 +198,8 @@ def load_inputs(input_dir: Path) -> InputData:
             "src": src, "dst": dst, "amount_minor": _minor(row["sum_kzt"], f"{label}, sum_kzt"),
             "n_tx": count, "depth": depth,
         }
+
+    _validate_discovery_depth(nodes_by_gid, edges_by_pair)
 
     transactions: list[dict] = []
     tx_amounts: dict[tuple[int, int], int] = defaultdict(int)

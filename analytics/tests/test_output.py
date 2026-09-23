@@ -202,6 +202,96 @@ class SnapshotTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(OutputError):
                 validate_snapshot(value)
 
+    def test_consistent_but_invalid_money_is_rejected(self):
+        # Keep every aggregate in agreement so only the monetary domain can
+        # catch a negative, zero or sub-tiyn transfer, not a mismatch check.
+        for amount in ("-5.50", "0", "0.001"):
+            value = connected_fixture()
+            value["edges"][0]["sum_kzt"] = amount
+            value["nodes"][0]["metrics"]["out_sum_kzt"] = amount
+            value["nodes"][1]["metrics"].update(
+                in_sum_kzt=amount, out_in_ratio=None if amount == "0" else 0,
+            )
+            value["clusters"][0]["sum_kzt_internal"] = amount
+            with self.subTest(amount=amount), self.assertRaisesRegex(OutputError, "sum_kzt"):
+                validate_snapshot(value)
+
+    def test_depth_ranges_and_seed_flags_are_checked(self):
+        mutations = (
+            lambda s: s["nodes"][0].update(depth=5),
+            lambda s: s["nodes"][0].update(depth=1),
+            lambda s: s["nodes"][0].update(is_seed=False),
+            lambda s: s["edges"][0].update(depth=0),
+            lambda s: s["edges"][0].update(depth=5),
+        )
+        for mutate in mutations:
+            value = connected_fixture()
+            mutate(value)
+            # Maintain seed counts when only the flag changed. This tests the
+            # depth/seed relation, not the existing aggregate count check.
+            seed_count = sum(node["is_seed"] for node in value["nodes"])
+            value["metadata"]["n_seeds"] = seed_count
+            value["clusters"][0]["n_seed"] = seed_count
+            with self.subTest(value=value), self.assertRaisesRegex(OutputError, "depth|is_seed"):
+                validate_snapshot(value)
+
+    def test_cluster_representatives_are_nonempty_ranked_prefix_up_to_three(self):
+        value = connected_fixture()
+        original = value["clusters"][0]["top_gids"][:]
+        value["clusters"][0]["top_gids"] = original[:1]
+        validate_snapshot(value)  # A shorter highest-priority prefix is allowed.
+        for gids in ([], original[::-1], original[1:]):
+            value["clusters"][0]["top_gids"] = gids
+            with self.subTest(gids=gids), self.assertRaisesRegex(OutputError, "top_gids"):
+                validate_snapshot(value)
+
+        # The documented policy permits up to three representatives, not four.
+        value = snapshot_fixture(4)
+        first = value["nodes"][0]
+        value["edges"] = [
+            {"src": first["gid"], "dst": node["gid"], "sum_kzt": "1.00", "n_tx": 1, "depth": 1}
+            for node in value["nodes"][1:]
+        ]
+        value["metadata"].update(n_edges=3, n_transactions=3)
+        first["metrics"].update(out_degree=3, out_sum_kzt="3.00", n_tx_out=3)
+        for node in value["nodes"][1:]:
+            node["cluster_id"] = 0
+            node["metrics"].update(in_degree=1, in_sum_kzt="1.00", n_tx_in=1, out_in_ratio=0)
+        gids = [node["gid"] for node in value["nodes"]]
+        value["clusters"] = [{"cluster_id": 0, "n_nodes": 4, "n_seed": 4,
+                              "sum_kzt_internal": "3.00", "top_gids": gids[:3],
+                              "hypothesis": "Синтетическая связанная группа."}]
+        validate_snapshot(value)
+        for representatives in (gids, gids[1:], [gids[0], gids[1], gids[3]]):
+            value["clusters"][0]["top_gids"] = representatives
+            with self.subTest(gids=representatives), self.assertRaisesRegex(OutputError, "top_gids"):
+                validate_snapshot(value)
+
+    def test_cluster_representatives_follow_priority_then_numeric_gid(self):
+        value = connected_fixture()
+        first, second = value["nodes"]
+        first["priority_score"], second["priority_score"] = 0.1, 0.9
+        value["top_nodes"].reverse()
+        for rank, row in enumerate(value["top_nodes"], start=1):
+            row["rank"] = rank
+            row["priority_score"] = value["nodes"][2 - rank]["priority_score"]
+        with self.assertRaisesRegex(OutputError, "top_gids"):
+            validate_snapshot(value)
+        value["clusters"][0]["top_gids"] = [second["gid"], first["gid"]]
+        validate_snapshot(value)
+
+        # Equal scores must use numeric ID order; strings would place 10 first.
+        first.update(gid="2", priority_score=0.9)
+        second["gid"] = "10"
+        value["edges"][0].update(src="2", dst="10")
+        value["top_nodes"][0].update(gid="2", priority_score=0.9)
+        value["top_nodes"][1].update(gid="10", priority_score=0.9)
+        value["clusters"][0]["top_gids"] = ["2", "10"]
+        validate_snapshot(value)
+        value["clusters"][0]["top_gids"].reverse()
+        with self.assertRaisesRegex(OutputError, "top_gids"):
+            validate_snapshot(value)
+
     def test_ranking_count_order_and_node_correspondence(self):
         for mutate in (
             lambda s: s["top_nodes"].pop(),
