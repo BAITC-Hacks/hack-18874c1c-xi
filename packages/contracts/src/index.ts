@@ -9,7 +9,8 @@ export type Kzt = string;
 export type RunStatus = "running" | "completed" | "failed";
 export interface ApiError { code: string; message: string }
 export interface RunState { run_id: string; status: RunStatus; elapsed_ms: number; error: ApiError | null }
-export interface HealthResponse { status: "ok"; service: "api"; analytics: "not_implemented" }
+/** HTTP liveness only; successful analysis is reported by a completed run. */
+export interface HealthResponse { status: "ok"; service: "api" }
 export interface NodeRole {
   gid: Gid; role: Role; role_score: number; cluster_id: number; priority_score: number; evidence: string;
 }
