@@ -12,7 +12,15 @@ const fields = [
   { key: "edges", label: "Связи", hint: "edges.parquet" },
   { key: "transactions", label: "Транзакции", hint: "transactions.parquet" },
 ] as const;
-const phaseLabel = { idle: "Готов к загрузке", uploading: "Отправляем файлы", running: "Выполняется расчёт", loading: "Получаем результат", completed: "Результат получен", error: "Ошибка запуска" };
+const phaseLabel = { idle: "Готов к загрузке", restoring: "Восстанавливаем анализ", uploading: "Отправляем файлы", running: "Выполняется расчёт", loading: "Получаем результат", completed: "Результат получен", error: "Ошибка запуска" };
+
+function rememberNode(runId: string | null, gid: string | null) {
+  const url = new URL(window.location.href);
+  if (!runId || url.searchParams.get("run") !== runId) return;
+  if (gid === null) url.searchParams.delete("gid");
+  else url.searchParams.set("gid", gid);
+  try { window.history.replaceState(window.history.state, "", url); } catch { /* Node selection still works if history is unavailable. */ }
+}
 
 export default function HomePage() {
   const { state, execute, reset } = useAnalysis();
@@ -25,7 +33,8 @@ export default function HomePage() {
   const [download, setDownload] = useState<CsvFile | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const downloadController = useRef<AbortController | null>(null);
-  const busy = ["uploading", "running", "loading"].includes(state.phase);
+  const uploadForm = useRef<HTMLFormElement | null>(null);
+  const busy = ["restoring", "uploading", "running", "loading"].includes(state.phase);
   const result = state.result;
   const selectedFiles = fields.filter(({ key }) => files[key]).length;
 
@@ -33,7 +42,10 @@ export default function HomePage() {
     setFixture(process.env.NODE_ENV === "development" && new URLSearchParams(window.location.search).get("fixture") === "1");
   }, []);
   useEffect(() => {
-    setSelectedGid(null); setDownloadError(null); setDownload(null);
+    const params = new URLSearchParams(window.location.search);
+    const savedGid = result && params.get("run") === state.runId ? params.get("gid") : null;
+    setSelectedGid(savedGid && result?.nodes.some(node => node.gid === savedGid) ? savedGid : null);
+    setDownloadError(null); setDownload(null);
     downloadController.current?.abort();
     return () => downloadController.current?.abort();
   }, [state.runId, result]);
@@ -45,8 +57,12 @@ export default function HomePage() {
   const selectNode = useCallback((gid: string) => {
     setSelectedGid(gid);
     setSelectionVersion(version => version + 1);
-  }, []);
-  const clearSelection = useCallback(() => setSelectedGid(null), []);
+    if (!fixture) rememberNode(state.runId, gid);
+  }, [fixture, state.runId]);
+  const clearSelection = useCallback(() => {
+    setSelectedGid(null);
+    if (!fixture) rememberNode(state.runId, null);
+  }, [fixture, state.runId]);
   const selectFromTable = (gid: string) => {
     selectNode(gid);
     const workspace = document.getElementById("graph-workspace");
@@ -65,6 +81,14 @@ export default function HomePage() {
     }
     downloadController.current?.abort();
     void execute(fixture ? null : files as InputFiles, fixture);
+  }
+
+  function newAnalysis() {
+    downloadController.current?.abort();
+    reset();
+    setFiles({});
+    setFileError(null);
+    uploadForm.current?.reset();
   }
 
   async function saveCsv(filename: CsvFile) {
@@ -92,26 +116,27 @@ export default function HomePage() {
       {result && <nav className="page-nav" aria-label="Результаты"><a href="#graph-workspace">Граф</a><a href="#top-title">Приоритеты</a><a href="#exports-title">Экспорт</a></nav>}
     </header>
     {fixture && <aside className="fixture-banner"><strong>DEV-FIXTURE · Синтетические данные</strong><span>Файлы не читаются. Расчёт Python и экспорт CSV здесь не выполняются.</span><a href="/">Вернуться к API</a></aside>}
-    {!result && <div className="page-heading"><h1>Новый анализ</h1><p>Загрузите три файла одного набора, чтобы исследовать переводы и связи между узлами.</p></div>}
+    {!result && <div className="page-heading"><h1>{state.restored && busy ? "Открываем анализ" : "Новый анализ"}</h1><p>{state.restored && busy ? "Получаем сохранённый запуск. Повторно загружать файлы не нужно." : "Загрузите три файла одного набора, чтобы исследовать переводы и связи между узлами."}</p></div>}
 
     <details className="upload-panel panel" open={uploadOpen} onToggle={event => setUploadOpen(event.currentTarget.open)}>
-      <summary className="upload-summary"><span className="disclosure-arrow" aria-hidden="true">›</span><strong>Исходные файлы</strong><span className="muted">{fixture ? "Режим демонстрации" : `${selectedFiles} из 3 выбрано`}</span><span className="upload-summary-action">{uploadOpen ? "Свернуть" : "Изменить файлы"}</span></summary>
-      <form onSubmit={submit} noValidate>
+      <summary className="upload-summary"><span className="disclosure-arrow" aria-hidden="true">›</span><strong>Исходные файлы</strong><span className="muted">{fixture ? "Режим демонстрации" : state.restored && result && !selectedFiles ? "Файлы текущего запуска загружены" : `${selectedFiles} из 3 выбрано`}</span><span className="upload-summary-action">{uploadOpen ? "Свернуть" : "Изменить файлы"}</span></summary>
+      <form ref={uploadForm} onSubmit={submit} noValidate>
         <div className="file-grid">{fields.map(({ key, label, hint }, index) => <label className={`file-field ${files[key] ? "has-file" : ""}`} key={key}>
           <span className="file-label"><span className="file-number">{index + 1}</span>{label}<span className="file-action">{files[key] ? "Заменить" : "Выбрать файл"}</span></span>
           <span className="file-name" title={files[key]?.name}>{files[key]?.name ?? hint}</span>
           <input type="file" accept=".parquet" aria-label={`${label} — ${hint}`} disabled={busy || fixture} onChange={event => { const file = event.target.files?.[0]; setFiles(previous => ({ ...previous, [key]: file })); setFileError(null); }} />
         </label>)}</div>
         {fileError && <p className="notice error" role="alert">{fileError}</p>}
-        <div className="upload-footer"><p className="muted small">Parquet · узлы, связи и транзакции одного набора</p><button className="button-primary" type="submit" disabled={busy}>{busy ? "Выполняется…" : fixture ? "Запустить dev-fixture" : "Запустить расчёт"}</button></div>
+        <div className="upload-footer"><p className="muted small">{state.restored && result ? "Для нового расчёта выберите другой комплект файлов." : "Parquet · узлы, связи и транзакции одного набора"}</p><button className="button-primary" type="submit" disabled={busy}>{busy ? "Выполняется…" : fixture ? "Запустить dev-fixture" : "Запустить расчёт"}</button></div>
       </form>
     </details>
 
     <section className={`run-status ${state.phase === "error" ? "status-error" : ""}`} aria-label="Состояние запуска">
       <div role="status" aria-live="polite"><span className="status-mark" aria-hidden="true">{state.phase === "error" ? "!" : state.phase === "completed" ? "✓" : "○"}</span><strong>{phaseLabel[state.phase]}</strong></div>
-      {state.phase !== "idle" && <span className="small muted">{(state.elapsedMs / 1000).toFixed(1)} с · {fixture ? "fixture" : "по данным API"}</span>}
+      {state.phase !== "idle" && state.phase !== "restoring" && <span className="small muted">{(state.elapsedMs / 1000).toFixed(1)} с · {fixture ? "fixture" : "по данным API"}</span>}
       {state.runId && <details className="run-reference"><summary>Номер запуска</summary><code className="run-id">{state.runId}</code></details>}
       {state.error && <div className="run-error"><p role="alert">{state.error}</p>{state.canResume && <button type="button" onClick={() => void execute(null, false, state.runId!)}>Повторить получение</button>}</div>}
+      {!busy && (state.runId || state.error) && <button type="button" className="text-button" onClick={newAnalysis}>Новый анализ</button>}
       {busy && <button type="button" className="text-button" onClick={() => { downloadController.current?.abort(); reset(); }}>Прекратить ожидание</button>}
       {busy && <p className="status-note muted small">Закрытие ожидания не останавливает расчёт на сервере.</p>}
     </section>

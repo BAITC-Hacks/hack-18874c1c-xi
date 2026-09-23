@@ -18,7 +18,7 @@ from pathlib import Path
 import re
 import subprocess
 from time import perf_counter
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from playwright.async_api import async_playwright, expect
 
@@ -312,6 +312,38 @@ async def main():
                 report["csv_rows"][filename] = len(validate_csv(filename, target, result))
             assert sum(method == "POST" and path.endswith("/runs") for method, path in requests) == 1
             assert len(results) == 1 and sum("/exports/" in path for method, path in requests if method == "GET") == 3
+            # Refresh restores the accepted run and selected exact gid, without
+            # uploading files or invoking a new analytical process.
+            selected_gid = cases[-1][1]["gid"]
+            query = parse_qs(urlparse(page.url).query)
+            assert query.get("run") == [accepted["run_id"]] and query.get("gid") == [selected_gid]
+            reloaded = perf_counter()
+            await page.reload()
+            await expect(page.locator(".run-status [role=status] strong")).to_have_text("Результат получен")
+            await expect(page.locator(".graph-canvas")).to_have_attribute("aria-busy", "false")
+            await expect(page.locator(".run-id")).to_have_text(accepted["run_id"])
+            await expect(page.get_by_test_id("selected-gid")).to_have_text(selected_gid)
+            await expect(page.locator(".priority-panel tbody tr")).to_have_count(len(result["top_nodes"]))
+            assert await page.locator('.upload-panel input[type="file"]').evaluate_all("inputs => inputs.every(input => input.files.length === 0)")
+            assert len(results) == 2 and await results[-1][0].json() == result
+            restored_graph = await page.locator(".graph-canvas").evaluate("el => { const cy=el._cyreg.cy; return {gids:cy.nodes('.client').map(n=>n.id()), edges:cy.edges().length}; }")
+            assert set(restored_graph["gids"]) == set(facts["gids"]) and restored_graph["edges"] == facts["counts"]["edges"]
+            report["reload_to_graph_ms"] = round((perf_counter() - reloaded) * 1000)
+            report["reload_csv_rows"] = {}
+            for filename in HEADERS:
+                async with page.expect_download() as download_info:
+                    await page.locator(".export-buttons").get_by_role("button", name=filename).click()
+                download = await download_info.value
+                target = ARTIFACTS / ("production-reloaded-" + filename)
+                await download.save_as(str(target))
+                assert download.suggested_filename == filename and await download.failure() is None
+                assert target.read_bytes() == (ARTIFACTS / ("production-" + filename)).read_bytes()
+                report["reload_csv_rows"][filename] = len(validate_csv(filename, target, result))
+            assert sum(method == "POST" and path.endswith("/runs") for method, path in requests) == 1, "reload triggered another upload"
+            assert len(results) == 2 and sum("/exports/" in path for method, path in requests if method == "GET") == 6
+            report["reload_same_run_without_post"] = True
+            report["reload_selected_gid_restored"] = True
+            await page.locator("#graph-workspace").screenshot(path=str(ARTIFACTS / "production-reloaded.png"), caret="initial")
             assert not errors, errors
             assert not console_errors, console_errors
             assert {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in paths.items()} == facts["sha256"]
