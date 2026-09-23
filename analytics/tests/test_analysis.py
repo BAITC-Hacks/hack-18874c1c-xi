@@ -128,6 +128,22 @@ class ClassificationTests(unittest.TestCase):
         self.assertIsNone(features["out_in_ratio"])
         self.assertEqual(classify(synthetic_node(), features)[0], "peripheral")
 
+    def test_transit_thresholds_use_exact_money_even_when_json_ratio_rounds(self):
+        incoming = 10**18
+        lower, upper = incoming * 4 // 5, incoming * 6 // 5
+        # One tiyn outside a threshold can round to the identical JSON float.
+        # Presentation precision must not decide membership in a financial rule.
+        self.assertEqual((lower - 1) / incoming, lower / incoming)
+        self.assertEqual((upper + 1) / incoming, upper / incoming)
+        for outgoing, expected in (
+            (lower - 1, "peripheral"), (lower, "transit"),
+            (lower + 1, "transit"), (upper - 1, "transit"),
+            (upper, "transit"), (upper + 1, "peripheral"),
+        ):
+            with self.subTest(outgoing=outgoing):
+                features = synthetic_features(incoming=incoming, outgoing=outgoing)
+                self.assertEqual(classify(synthetic_node(), features)[0], expected)
+
     def test_score_bounds_under_extreme_structural_strength(self):
         for features in (synthetic_features(10**6, 10**6, external=100),
                          synthetic_features(10**6, 0, outgoing=0),

@@ -59,6 +59,18 @@ class InputDataTests(unittest.TestCase):
         with self.assertRaisesRegex(InputError, pattern):
             load_inputs(self.directory)
 
+    def use_graph(self, depths, pairs):
+        """Build consistent tiny transfers around explicitly declared hop labels."""
+        self.rows = {
+            "nodes": [{"gid": gid, "depth": depth, "is_seed": depth == 0}
+                      for gid, depth in depths.items()],
+            "edges": [{"src": src, "dst": dst, "sum_kzt": 5000.0,
+                       "n_tx": 1, "depth": depths[src] + 1}
+                      for src, dst in pairs],
+            "transactions": [{"src": src, "dst": dst, "sum_kzt": 5000.0,
+                              "date": date(2026, 7, 1)} for src, dst in pairs],
+        }
+
     def test_exact_money_large_gid_isolated_seed_and_stable_order(self):
         self.write()
         data = load_inputs(self.directory)
@@ -208,6 +220,41 @@ class InputDataTests(unittest.TestCase):
         self.rows["edges"][0]["depth"] = 1
         self.rows["nodes"][1]["depth"] = 2
         self.assert_invalid("depth")
+
+    def test_depth_is_shortest_directed_hop_not_only_local_edge_consistency(self):
+        # Every edge passes the previous endpoint inequalities, but node 4 is
+        # actually at the boundary. Accepting depth=1 would permit terminal.
+        self.use_graph({0: 0, 1: 1, 2: 2, 3: 3, 4: 1},
+                       [(0, 1), (1, 2), (2, 3), (3, 4)])
+        self.assert_invalid(r"gid 4.*depth.*1.*4")
+
+    def test_unreachable_nonseeds_are_rejected_even_in_weakly_connected_graph(self):
+        for depths, pairs in (
+            ({0: 0, 1: 1}, []),                         # isolated nonseed
+            ({0: 0, 1: 1}, [(1, 0)]),                  # reverse-only path
+            ({0: 0, 1: 1, 2: 1}, [(1, 2), (2, 1)]), # disconnected cycle
+            ({1: 1}, [(1, 1)]),                        # no seeds, self-loop
+        ):
+            with self.subTest(depths=depths, pairs=pairs):
+                self.use_graph(depths, pairs)
+                self.assert_invalid(r"gid 1.*недостижим.*seed")
+
+    def test_discovery_depth_uses_all_seeds_and_preserves_valid_cycles(self):
+        # Multi-source traversal: 2 is reached sooner from seed 10 than from 0.
+        # Seed 20 is isolated; seed 30 is receiver-only. Neither is discarded.
+        depths = {0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 4,
+                  10: 0, 20: 0, 30: 0}
+        pairs = [(0, 0), (0, 1), (1, 2), (10, 2),
+                 (2, 3), (3, 2), (3, 4), (4, 5), (2, 30)]
+        self.use_graph(depths, pairs)
+        self.write()
+        data = load_inputs(self.directory)
+        self.assertEqual({n["gid"]: n["depth"] for n in data.nodes}, depths)
+        self.assertEqual(len(data.edges), len(pairs))
+        for rows in self.rows.values():
+            rows.reverse()
+        self.write()
+        self.assertEqual(load_inputs(self.directory), data)
 
     def test_nonpositive_nonfinite_and_fractional_minor_amounts(self):
         for name in ("edges", "transactions"):

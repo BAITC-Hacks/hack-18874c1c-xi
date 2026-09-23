@@ -17,6 +17,7 @@ from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
 
+from .config import DEFAULT_CONFIG
 from .contracts import CSV_COLUMNS, ROLES, SCHEMA_VERSION
 
 
@@ -92,10 +93,15 @@ def _gid(value, path):
         _fail(path, "gid is outside int64 or is not canonical decimal notation")
 
 
-def _money(value, path):
+def _money(value, path, *, positive=False):
     if type(value) is not str or _MONEY.fullmatch(value) is None:
         _fail(path, "expected an exact decimal monetary string without exponent")
-    return Fraction(Decimal(value))
+    amount = Fraction(Decimal(value))
+    if amount < 0 or (positive and amount == 0):
+        _fail(path, "expected a positive transfer" if positive else "expected a nonnegative monetary total")
+    if (amount * 100).denominator != 1:
+        _fail(path, "sub-tiyn monetary precision is not allowed; rounding is forbidden")
+    return amount
 
 
 def _role(value, path):
@@ -140,8 +146,12 @@ internal consistency of the supplied snapshot.
         _number(node["priority_score"], f"{path}.priority_score", 0, 1)
         _integer(node["cluster_id"], f"{path}.cluster_id")
         _integer(node["depth"], f"{path}.depth", 0)
+        if node["depth"] > 4:
+            _fail(f"{path}.depth", "expected a depth in 0..4")
         if type(node["is_seed"]) is not bool:
             _fail(f"{path}.is_seed", "expected a boolean")
+        if node["is_seed"] != (node["depth"] == 0):
+            _fail(f"{path}.is_seed", "must correspond to depth == 0")
         _text(node["evidence"], f"{path}.evidence", 200)
         _strings(node["limitations"], f"{path}.limitations")
         metrics = node["metrics"]
@@ -197,8 +207,10 @@ internal consistency of the supplied snapshot.
             _fail(path, "duplicate aggregated edge")
         pairs.add(pair)
         _integer(edge["n_tx"], f"{path}.n_tx", 1)
-        _integer(edge["depth"], f"{path}.depth", 0)
-        amount = _money(edge["sum_kzt"], f"{path}.sum_kzt")
+        _integer(edge["depth"], f"{path}.depth", 1)
+        if edge["depth"] > 4:
+            _fail(f"{path}.depth", "expected a depth in 1..4")
+        amount = _money(edge["sum_kzt"], f"{path}.sum_kzt", positive=True)
         source, target = totals[edge["src"]], totals[edge["dst"]]
         source["outgoing"].add(edge["dst"])
         source["out_sum"] += amount
@@ -241,6 +253,12 @@ internal consistency of the supplied snapshot.
         _same(cluster["n_seed"], sum(node["is_seed"] for node in cluster_nodes), f"{path}.n_seed")
         _same(_money(cluster["sum_kzt_internal"], f"{path}.sum_kzt_internal"),
               internal[cluster_id], f"{path}.sum_kzt_internal")
+        representatives = cluster["top_gids"]
+        if not 1 <= len(representatives) <= min(DEFAULT_CONFIG.cluster_top_count, len(cluster_nodes)):
+            _fail(f"{path}.top_gids", f"expected a nonempty prefix of up to {DEFAULT_CONFIG.cluster_top_count} representatives")
+        ordered_members = sorted(cluster_nodes, key=lambda node: (-node["priority_score"], int(node["gid"])))
+        _same(representatives, [node["gid"] for node in ordered_members[:len(representatives)]],
+              f"{path}.top_gids priority order")
 
     _same(metadata["n_nodes"], len(nodes), "metadata.n_nodes")
     _same(metadata["n_edges"], len(pairs), "metadata.n_edges")
