@@ -11,7 +11,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-const apiBaseUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api").replace(/\/+$/, "");
+export const apiBaseUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api").replace(/\/+$/, "");
 const GET_TIMEOUT_MS = 15_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
 

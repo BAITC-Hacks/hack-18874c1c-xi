@@ -116,24 +116,166 @@ def empty_result():
 
 
 async def upload(page, invalid=False):
+    await open_upload(page)
     for index, field in enumerate(FILES):
-        await page.locator('input[type="file"]').nth(index).set_input_files({
+        await page.locator('.upload-panel input[type="file"]').nth(index).set_input_files({
             "name": "nodes.csv" if invalid and index == 0 else f"{field}.parquet", "mimeType": "application/octet-stream",
             "buffer": b"PAR1-browser-contract-test-PAR1",
         })
-    await page.get_by_role("button", name=re.compile("^Запустить расчёт")).click()
+    await page.locator('.upload-panel button[type="submit"]').click()
+
+
+async def open_upload(page):
+    """The result view folds the upload form; expand through its real summary."""
+    panel = page.locator(".upload-panel")
+    folded = panel.locator("xpath=ancestor-or-self::details[1]")
+    if await folded.count() and not await folded.evaluate("el => el.open"):
+        await folded.locator(":scope > summary").click()
 
 
 async def ready_graph(page):
     await expect(page.locator(".graph-canvas")).to_have_attribute("aria-busy", "false")
-    await expect(page.locator(".graph-summary")).to_contain_text("24 узлов")
+    await page.wait_for_function("document.querySelector('.graph-canvas')?._cyreg?.cy?.nodes('.client').length === 24")
     await expect(page.locator("table tbody tr")).to_have_count(20)
 
 
 async def search(page, gid):
     await page.locator("#gid-search").fill(gid)
-    await page.get_by_role("button", name="Найти узел ↗").click()
+    await page.locator(".search-form button[type='submit']").click()
     await expect(page.get_by_test_id("selected-gid")).to_have_text(gid)
+
+
+async def open_node_sections(page):
+    closed = page.locator(".node-panel details:not([open]) > summary")
+    while await closed.count():
+        await closed.first.click()
+
+
+async def stable_graph_frame(page):
+    await page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+
+
+async def assert_neighbors_inside_canvas(page):
+    await page.wait_for_function("""() => {
+      const cy = document.querySelector('.graph-canvas')._cyreg.cy;
+      const visible = cy.nodes('.client:visible');
+      return visible.length > 1 && visible.length <= 10 && visible.every(node => {
+        const box = node.renderedBoundingBox({includeLabels: true, includeOverlays: false});
+        return box.x1 >= -1 && box.y1 >= -1 && box.x2 <= cy.width() + 1 && box.y2 <= cy.height() + 1;
+      });
+    }""")
+
+
+async def check_repeated_selection(page, gid):
+    """A repeated intent must focus the node even when its gid did not change."""
+    await search(page, gid)
+    await stable_graph_frame(page)
+    await page.evaluate("""() => {
+      const cy = document.querySelector('.graph-canvas')._cyreg.cy;
+      window.__repeatBefore = {cy, zoom: cy.zoom(), pan: {...cy.pan()},
+        positions: JSON.stringify(cy.nodes('.client').map(node => [node.id(), node.position()])),
+        layouts: (window.__smokeGraph ?? window.__scaleGraph).layouts};
+    }""")
+    await page.locator("#gid-search").fill("draft-query")
+    await stable_graph_frame(page)
+    assert await page.evaluate("""() => {
+      const previous = window.__repeatBefore, cy = document.querySelector('.graph-canvas')._cyreg.cy;
+      return previous.cy === cy && previous.layouts === (window.__smokeGraph ?? window.__scaleGraph).layouts
+        && previous.positions === JSON.stringify(cy.nodes('.client').map(node => [node.id(), node.position()]));
+    }"""), "typing restarted graph layout or changed node positions"
+    await page.evaluate("""() => {
+      const cy = window.__repeatBefore.cy;
+      cy.zoom(Math.max(cy.minZoom(), cy.zoom() / 2));
+      cy.pan({x: cy.pan().x + 400, y: cy.pan().y + 250});
+    }""")
+    await search(page, gid)
+    await page.wait_for_function("""() => {
+      const previous = window.__repeatBefore, cy = document.querySelector('.graph-canvas')._cyreg.cy;
+      return cy === previous.cy && Math.abs(cy.zoom() - previous.zoom) < 0.001
+        && Math.abs(cy.pan().x - previous.pan.x) < 2 && Math.abs(cy.pan().y - previous.pan.y) < 2;
+    }""")
+    await page.locator("#gid-search").fill("draft-query")
+    row_button = page.locator("table").get_by_role("button", name=f"Открыть узел {gid}", exact=True)
+    await row_button.click()
+    await expect(page.locator("#gid-search")).to_have_value(gid)
+    await expect(page.get_by_test_id("selected-gid")).to_have_text(gid)
+
+
+async def check_workspace_expansion(page, gid, artifact_prefix):
+    """Resizing is a presentation operation: data, selection and camera survive."""
+    workspace = page.locator("#graph-workspace")
+    toggle = page.get_by_role("button", name="На весь экран", exact=True)
+    await toggle.scroll_into_view_if_needed()
+    await stable_graph_frame(page)
+    await page.evaluate("""() => {
+      const cy = document.querySelector('.graph-canvas')._cyreg.cy;
+      const extent = cy.extent();
+      window.__expandedBefore = {cy, zoom: cy.zoom(), x: (extent.x1 + extent.x2) / 2, y: (extent.y1 + extent.y2) / 2,
+        positions: JSON.stringify(cy.nodes('.client').map(node => [node.id(), node.position()])),
+        selected: cy.nodes('.focused').map(node => node.id()),
+        layouts: (window.__smokeGraph ?? window.__scaleGraph).layouts,
+        bodyOverflow: document.body.style.overflow, rootOverflow: document.documentElement.style.overflow,
+        scrollY: window.scrollY};
+    }""")
+    await toggle.click()
+    await expect(workspace).to_have_attribute("role", "dialog")
+    await expect(workspace).to_have_attribute("aria-modal", "true")
+    await expect(page.locator("#gid-search")).to_be_focused()
+    await expect(page.get_by_test_id("selected-gid")).to_have_text(gid)
+    if await page.locator(".fixture-banner").count():
+        await expect(workspace.locator(".workspace-fixture")).to_be_visible()
+        await expect(workspace.locator(".workspace-fixture")).to_have_text("DEV-FIXTURE")
+    await stable_graph_frame(page)
+    rect = await workspace.bounding_box()
+    viewport = page.viewport_size
+    assert rect and viewport and abs(rect["x"]) < 2 and abs(rect["y"]) < 2, rect
+    assert abs(rect["width"] - viewport["width"]) < 2 and abs(rect["height"] - viewport["height"]) < 2, (rect, viewport)
+    canvas_rect = await page.locator(".graph-canvas").bounding_box()
+    assert canvas_rect and canvas_rect["width"] >= 250 and canvas_rect["height"] >= 240, canvas_rect
+    assert await page.evaluate("getComputedStyle(document.body).overflow === 'hidden'"), "expanded workspace must lock background scroll"
+    assert await page.locator(".upload-panel").evaluate("el => Boolean(el.closest('[inert]'))"), "background upload remains interactive"
+    await assert_graph_preserved(page)
+    # Tab/Shift+Tab must not move focus into the inactive background.
+    await page.keyboard.press("Shift+Tab")
+    assert await workspace.evaluate("el => el.contains(document.activeElement)"), "keyboard focus escaped expanded workspace"
+    await page.keyboard.press("Tab")
+    assert await workspace.evaluate("el => el.contains(document.activeElement)"), "keyboard focus escaped expanded workspace"
+    await page.screenshot(path=str(ARTIFACTS / f"{artifact_prefix}-expanded.png"), full_page=False)
+    await page.keyboard.press("Escape")
+    await expect(page.get_by_role("button", name="На весь экран", exact=True)).to_be_focused()
+    await expect(workspace).not_to_have_attribute("aria-modal", "true")
+    await stable_graph_frame(page)
+    await assert_graph_preserved(page)
+    assert await page.evaluate("document.body.style.overflow === window.__expandedBefore.bodyOverflow && document.documentElement.style.overflow === window.__expandedBefore.rootOverflow"), "background scroll styles were not restored"
+    assert not await page.locator(".upload-panel").evaluate("el => Boolean(el.closest('[inert]'))"), "background remained inert after Escape"
+    scroll_position = await page.evaluate("({before: window.__expandedBefore.scrollY, after: scrollY})")
+    assert abs(scroll_position["after"] - scroll_position["before"]) < 2, f"Escape changed document scroll position: {scroll_position}"
+    # The visible collapse control must provide the same exit behavior as Escape.
+    await page.get_by_role("button", name="На весь экран", exact=True).click()
+    await page.locator("#gid-search").fill("__missing_gid__")
+    await page.locator("#gid-search").press("Enter")
+    await expect(page.locator("#gid-search-error")).to_contain_text("Узел не найден")
+    await expect(page.locator("#gid-search")).to_have_value("__missing_gid__")
+    await expect(page.get_by_test_id("selected-gid")).to_have_count(0)
+    await search(page, gid)
+    await page.get_by_role("button", name="Свернуть", exact=True).click()
+    await expect(page.get_by_role("button", name="На весь экран", exact=True)).to_be_focused()
+    await stable_graph_frame(page)
+    assert await page.evaluate("document.querySelector('.graph-canvas')._cyreg.cy === window.__expandedBefore.cy"), "search inside fullscreen recreated Cytoscape"
+    assert await page.evaluate("document.body.style.overflow === window.__expandedBefore.bodyOverflow"), "collapse button did not unlock background scrolling"
+
+
+async def assert_graph_preserved(page):
+    await page.wait_for_function("""() => {
+      const previous = window.__expandedBefore, cy = document.querySelector('.graph-canvas')._cyreg.cy;
+      const extent = cy.extent();
+      return cy === previous.cy && Math.abs(cy.zoom() - previous.zoom) < 0.001
+        && previous.layouts === (window.__smokeGraph ?? window.__scaleGraph).layouts
+        && Math.abs((extent.x1 + extent.x2) / 2 - previous.x) < 2
+        && Math.abs((extent.y1 + extent.y2) / 2 - previous.y) < 2
+        && previous.positions === JSON.stringify(cy.nodes('.client').map(node => [node.id(), node.position()]))
+        && JSON.stringify(previous.selected) === JSON.stringify(cy.nodes('.focused').map(node => node.id()));
+    }""")
 
 
 async def assert_no_horizontal_overflow(page):
@@ -144,34 +286,40 @@ async def fixture_case(page, scenario):
     await page.goto(f"{WEB_URL}/?fixture=1")
     await expect(page.locator(".fixture-banner")).to_be_visible()
     await expect(page.locator(".graph-canvas")).to_have_count(0)
-    await page.get_by_role("button", name=re.compile("^Запустить dev-fixture")).click()
+    await page.locator('.upload-panel button[type="submit"]').click()
     await ready_graph(page)
     assert not scenario.requests, "fixture must not call the real API"
     await expect(page.get_by_label("Легенда ролей").locator("li")).to_have_count(6)
     await page.evaluate("""() => {
       const cy = document.querySelector('.graph-canvas')._cyreg.cy;
       window.__smokeGraph = {cy, layouts: 0, positions: JSON.stringify(cy.nodes('.client').map(n => [n.id(), n.position()]))};
-      cy.on('layoutstart', () => window.__smokeGraph.layouts++);
+      cy.on('layoutstart layoutstop', () => window.__smokeGraph.layouts++);
       if (cy.nodes('.client').length !== 24 || cy.edges().length !== 21) throw Error('Incomplete graph');
     }""")
     await search(page, GID_SEED)
-    await expect(page.locator(".node-panel .score-grid")).to_contain_text("role_score")
-    await expect(page.locator(".node-panel .score-grid")).to_contain_text("priority_score")
+    await check_repeated_selection(page, GID_SEED)
+    await assert_neighbors_inside_canvas(page)
+    await open_node_sections(page)
+    await expect(page.locator(".node-panel .score-grid")).to_contain_text("Оценка роли")
+    await expect(page.locator(".node-panel .score-grid")).to_contain_text("Приоритет проверки")
+    await expect(page.locator(".node-panel .score-grid strong")).to_have_text(["0.800", "0.980"])
     await expect(page.locator(".node-panel .connections li")).to_have_count(2)
     await page.locator(".node-panel .connections").get_by_role("button", name="9007199254740994", exact=True).click()
     await expect(page.get_by_test_id("selected-gid")).to_have_text("9007199254740994")
     text = await page.locator(".node-panel").inner_text()
     assert "9007199254740993,01" in re.sub(r"\s", "", text), "large monetary string lost precision"
     await search(page, GID_DEPTH4)
+    await open_node_sections(page)
     await expect(page.locator(".node-panel")).to_contain_text("Глубина 4")
     await expect(page.locator(".node-panel .connections li")).to_have_count(1)
     await search(page, GID_ISOLATE)
+    await open_node_sections(page)
     await expect(page.locator(".node-panel")).to_contain_text("Наблюдаемых связей нет")
     await expect(page.locator(".node-panel")).to_contain_text("Не определено")
     assert await page.evaluate("document.querySelector('.graph-canvas')._cyreg.cy.getElementById('9223372036854775807').hasClass('focused')")
     await search(page, "9007199254741015")
     await page.locator("#gid-search").fill("123456789")
-    await page.get_by_role("button", name="Найти узел ↗").click()
+    await page.locator(".search-form button[type='submit']").click()
     await expect(page.get_by_text("Узел не найден: 123456789", exact=True)).to_be_visible()
     await expect(page.get_by_test_id("selected-gid")).to_have_count(0)
     await page.locator("table tbody tr").first.get_by_role("button").click()
@@ -181,16 +329,38 @@ async def fixture_case(page, scenario):
     point = await page.evaluate("document.querySelector('.graph-canvas')._cyreg.cy.getElementById('9007199254740996').renderedPosition()")
     await page.locator(".graph-canvas").click(position=point)
     await expect(page.get_by_test_id("selected-gid")).to_have_text("9007199254740996")
+    # Clusters and neighborhoods filter visibility, never the stored node set.
+    await page.get_by_label("Кластер на графе", exact=True).select_option("2")
+    await expect(page.get_by_test_id("selected-gid")).to_have_count(0)
+    counts = await page.locator(".graph-canvas").evaluate("el => { const cy=el._cyreg.cy; return [cy.nodes('.client').length, cy.nodes('.client:visible').length]; }")
+    assert counts == [24, 8], counts
+    assert not await page.locator(".graph-canvas").evaluate("el => el._cyreg.cy.getElementById('9223372036854775807').visible()")
+    await search(page, GID_ISOLATE)
+    assert await page.locator(".graph-canvas").evaluate("el => el._cyreg.cy.getElementById('9223372036854775807').visible()")
+    await search(page, GID_SEED)
+    await page.get_by_role("button", name="Связи узла", exact=True).click()
+    visible = await page.locator(".graph-canvas").evaluate("el => el._cyreg.cy.nodes('.client:visible').map(node => node.id()).sort()")
+    assert visible == [GID_SEED, "9007199254740994", "9007199254740995"], visible
+    await page.get_by_role("button", name="Весь граф", exact=True).click()
+    await expect(page.get_by_test_id("selected-gid")).to_have_count(0)
+    assert await page.locator(".graph-canvas").evaluate("el => el._cyreg.cy.nodes('.client:visible').length") == 24
+    assert await page.evaluate("""() => {
+      const cy = document.querySelector('.graph-canvas')._cyreg.cy;
+      return window.__smokeGraph.positions === JSON.stringify(cy.nodes('.client').map(node => [node.id(), node.position()]));
+    }"""), "overview positions were not restored when resetting graph scope"
+    await search(page, "9007199254740996")
+    await check_workspace_expansion(page, "9007199254740996", "fixture-desktop")
     assert await page.evaluate("""() => {
       const old = window.__smokeGraph, cy = document.querySelector('.graph-canvas')._cyreg.cy;
-      return cy === old.cy && old.layouts === 0 && old.positions === JSON.stringify(cy.nodes('.client').map(n => [n.id(), n.position()]));
-    }"""), "selection/search recreated the graph or restarted layout"
+      return cy === old.cy;
+    }"""), "selection/search recreated the graph"
     for filename in EXPORTS:
         await expect(page.get_by_role("button", name=re.compile(re.escape(filename)))).to_be_disabled()
     await assert_no_horizontal_overflow(page)
     await page.screenshot(path=str(ARTIFACTS / "fixture-desktop.png"), full_page=True)
     await page.set_viewport_size({"width": 390, "height": 844})
     await search(page, GID_ISOLATE)
+    await check_workspace_expansion(page, GID_ISOLATE, "fixture-mobile")
     await assert_no_horizontal_overflow(page)
     await page.screenshot(path=str(ARTIFACTS / "fixture-mobile.png"), full_page=True)
 
@@ -198,7 +368,9 @@ async def fixture_case(page, scenario):
 async def success_case(page, scenario):
     await page.goto(WEB_URL)
     await expect(page.locator(".fixture-banner")).to_have_count(0)
-    await page.get_by_role("button", name=re.compile("^Запустить расчёт")).click()
+    # Hiding carets before hydration mutates input styles and causes a false React mismatch.
+    await page.screenshot(path=str(ARTIFACTS / "initial-page.png"), full_page=True, caret="initial")
+    await page.locator('.upload-panel button[type="submit"]').click()
     await expect(page.locator("main [role='alert']")).to_contain_text("Выберите файлы")
     assert scenario.posts == 0
     await upload(page, invalid=True)
@@ -244,7 +416,7 @@ async def empty_case(page, scenario):
     await upload(page)
     await expect(page.get_by_role("heading", name="Пустой результат", exact=True)).to_be_visible()
     await expect(page.locator(".graph-canvas")).to_have_count(0)
-    await expect(page.get_by_role("heading", name="Скачать CSV", exact=True)).to_be_visible()
+    await expect(page.locator(".export-buttons button")).to_have_count(3)
     await page.screenshot(path=str(ARTIFACTS / "empty.png"), full_page=True)
 
 
@@ -256,7 +428,7 @@ async def replacement_case(page, scenario):
     await asyncio.wait_for(scenario.old_pending.wait(), 15)
     await expect(page.get_by_text("Получаем результат", exact=True)).to_be_visible()
     await page.get_by_role("button", name="Прекратить ожидание", exact=True).click()
-    await page.get_by_role("button", name=re.compile("^Запустить расчёт")).click()
+    await page.locator('.upload-panel button[type="submit"]').click()
     await ready_graph(page)
     await expect(page.locator(".run-id")).to_have_text("browser-run-2")
     scenario.release_old.set()
@@ -278,12 +450,17 @@ async def main():
     summary = []
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(channel=os.environ.get("BROWSER_CHANNEL", "chrome"), headless=True)
-        for mode, check in [
+        cases = [
             ("fixture", fixture_case), ("success", success_case),
             ("unimplemented", error_case), ("failed", error_case),
             ("invalid", error_case), ("empty", empty_case),
             ("replacement", replacement_case),
-        ]:
+        ]
+        selected_cases = set(filter(None, os.environ.get("BROWSER_CASES", "").split(",")))
+        assert selected_cases <= {mode for mode, _ in cases}, "Unknown BROWSER_CASES value"
+        for mode, check in cases:
+            if selected_cases and mode not in selected_cases:
+                continue
             context = await browser.new_context(viewport={"width": 1440, "height": 1000}, locale="ru-RU", accept_downloads=True)
             page = await context.new_page()
             page.set_default_timeout(20000)
@@ -297,7 +474,7 @@ async def main():
                 summary.append({"case": mode, "status": "passed", "api_requests": scenario.requests})
                 print(f"PASS {mode}", flush=True)
             except Exception as error:
-                await page.screenshot(path=str(ARTIFACTS / f"FAILED-{mode}.png"), full_page=True)
+                await page.screenshot(path=str(ARTIFACTS / f"FAILED-{mode}.png"), full_page=True, caret="initial")
                 summary.append({"case": mode, "status": "failed", "error": str(error), "page_errors": errors, "api_requests": scenario.requests})
                 raise
             finally:
