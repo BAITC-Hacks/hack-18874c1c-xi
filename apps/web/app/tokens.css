@@ -1,0 +1,21 @@
+:root {
+  color-scheme: dark;
+
+  /* Approved XI palette: docs/design/xi-palette.svg. Shared by CSS and Cytoscape. */
+  --xi-ink: #0C0E14;
+  --xi-ink-800: #161A23;
+  --xi-ink-700: #242A36;
+  --xi-volt: #D8FF57;
+  --xi-paper: #F2EFE6;
+  --xi-ultra: #4338FF;
+  --xi-slate: #7D8494;
+  --xi-slate-300: #A9AFBC;
+  --xi-slate-200: #D3D6DD;
+
+  --background: var(--xi-ink);
+  --surface: var(--xi-ink-800);
+  --text: var(--xi-paper);
+  --muted: var(--xi-slate-300);
+  --border: var(--xi-ink-700);
+  --accent: var(--xi-volt);
+}
