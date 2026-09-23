@@ -91,3 +91,42 @@ Backend не объявляется доказательством готовн�
 ### Дополнительно включён frontend
 
 Перед публикацией обнаружен новый `origin/ilya-branch-front` — `fa9b0b5`; он включён merge-коммитом `a7b56bb`. Прошли 51 frontend unit-тест, общая проверка типов и структуры; повторный `docker compose up --build --wait` собрал обе реализации, оба сервиса healthy. Настоящий `analysis.json` принят frontend-валидатором без потерь ID/денег. Контракты не менялись. Браузерные тесты из frontend-ветки используют синтетические ответы и не заменяют ещё не проведённую сквозную UI-проверку на реальных Parquet. Новый UI не зависит от старого поля health.
+
+## Приёмка предоставленных Parquet — 23.09.2026, Ерасыл
+
+Проверен код `53f2437` в `yerasyl-branch-back`, включая аналитику Родиона и исправления публикации результатов на Windows. Владелец временно предоставил три настоящих входа: `nodes.parquet` (11 905 B), `edges.parquet` (34 187 B), `transactions.parquet` (40 745 B). Исходные строки, gid, JSON и CSV в этот отчёт не включены.
+
+Проверены точное множество всех 2 248 исходных узлов, 3 119 рёбер, 4 840 транзакций и 81 seed; сохранение изолятов и ограничений depth=4; точные денежные агрегаты; воспроизводимость после перестановки строк настоящих Parquet. HTTP-приёмка выполняет multipart-загрузку в отдельный временный API, настоящий Python CLI, проверку артефактов, получение `completed`, JSON и всех трёх CSV. Скачанные CSV побайтово совпадают с файлами расчёта.
+
+| Проверка | Результат |
+| :--- | :--- |
+| Python unittest, Windows x64 / Python 3.13.12 | 84 теста, ошибок нет; 2 пропуска только для создания symlink без права Windows. Все 4 проверки реального набора прошли |
+| Python unittest, Docker Linux x64 / Python 3.12.14 | 84 теста, ошибок нет; 3 пропуска только для Windows fallback. Все 4 проверки реального набора и обе symlink-проверки прошли |
+| `npm run test:dataset --workspace @money-graph/api`, Windows / Node v24.14.0 | 1/1; Python-процесс 1 902,9454 ms; процесс + backend-валидация **2 007 ms** |
+| `node --test apps/api/test/dataset.integration.cjs`, Docker / Node v24.21.0 | 1/1; Python-процесс 1 822,753 ms; процесс + backend-валидация **1 927 ms** |
+
+Машина: Intel Core i5-11400H, Windows x64 с Docker Linux x64. Оба внешних замера полного процесса (от `spawn` до `close`, включая чтение Parquet, расчёт и запись/проверку четырёх файлов) меньше 300 секунд. Установка, сборка, старт контейнера и HTTP-загрузка не включены; это фактические единичные измерения, а не гарантия для любой машины. Python unittest также отдельно подтвердил полный самостоятельный CLI-запуск менее 300 секунд.
+
+Первый параллельный запуск на Windows остановился при импорте библиотек с OpenBLAS allocation error / `MemoryError`; приёмка до данных не дошла. Повторные проверки выполнялись последовательно, с одним потоком BLAS/OpenMP и ограничением heap Node для npm/HTTP-теста. Системные настройки и код расчёта не менялись.
+
+Фактические команды PowerShell из корня, пока файлы присутствовали:
+
+```powershell
+$env:OPENBLAS_NUM_THREADS = '1'
+$env:OMP_NUM_THREADS = '1'
+$env:PYTHON_BIN = (Resolve-Path .venv/Scripts/python.exe).Path
+$env:REAL_DATA_DIR = (Resolve-Path data).Path
+$env:MONEY_GRAPH_DATA_DIR = $env:REAL_DATA_DIR
+$env:NODE_OPTIONS = '--max-old-space-size=256'
+npm run test:dataset --workspace @money-graph/api
+.venv/Scripts/python.exe -m unittest discover -s analytics/tests -v
+```
+
+Docker использовал уже собранные образы analytics `52cd2fd3405b` и api `42e2993a15fe`, входы монтировались только для чтения, сеть отключена. Запущенные сервисы приложения не заменялись:
+
+```powershell
+docker run --rm --network none --mount 'type=bind,source=D:/hack-18874c1c-xi/data,target=/data,readonly' --env MONEY_GRAPH_DATA_DIR=/data money-graph-analytics python -m unittest discover -s analytics/tests -v
+docker run --rm --network none --mount 'type=bind,source=D:/hack-18874c1c-xi/data,target=/data,readonly' --env REAL_DATA_DIR=/data --env PYTHON_BIN=/opt/venv/bin/python --env OPENBLAS_NUM_THREADS=1 --env OMP_NUM_THREADS=1 money-graph-api node --test apps/api/test/dataset.integration.cjs
+```
+
+После успешных проверок `data/nodes.parquet`, `data/edges.parquet` и `data/transactions.parquet` удалены по явному поручению владельца. В `data/`, `runs/` и `artifacts/` остались только `.gitkeep`; временные загрузки и результаты тесты очищают сами, Docker-контейнеры удалены через `--rm`. В индексе и достижимой истории проверяемой ветки Parquet и реальные экспорты отсутствуют. Для повторной приёмки данные нужно предоставить отдельно. Браузерный сценарий, обновление старого поля health и финальное демо этой проверкой не закрываются.
