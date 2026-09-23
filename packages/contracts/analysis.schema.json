@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Money Graph analysis v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["metadata", "nodes", "edges", "clusters", "top_nodes"],
+  "properties": {
+    "metadata": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "n_nodes", "n_edges", "n_transactions", "n_seeds", "elapsed_ms", "warnings"],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "n_nodes": {"$ref": "#/$defs/count"}, "n_edges": {"$ref": "#/$defs/count"},
+        "n_transactions": {"$ref": "#/$defs/count"}, "n_seeds": {"$ref": "#/$defs/count"},
+        "elapsed_ms": {"type": "number", "minimum": 0},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
+    "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
+    "clusters": {"type": "array", "items": {"$ref": "#/$defs/cluster"}},
+    "top_nodes": {"type": "array", "items": {"$ref": "#/$defs/topNode"}}
+  },
+  "$defs": {
+    "gid": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$", "maxLength": 20},
+    "kzt": {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$"},
+    "count": {"type": "integer", "minimum": 0},
+    "score": {"type": "number", "minimum": 0, "maximum": 1},
+    "text": {"type": "string", "minLength": 1},
+    "role": {"enum": ["consolidator", "transit", "distributor", "terminal", "coordinator", "peripheral"]},
+    "metrics": {
+      "type": "object",
+      "required": ["in_degree", "out_degree", "in_sum_kzt", "out_sum_kzt", "n_tx_in", "n_tx_out", "out_in_ratio"],
+      "properties": {
+        "in_degree": {"$ref": "#/$defs/count"}, "out_degree": {"$ref": "#/$defs/count"},
+        "in_sum_kzt": {"$ref": "#/$defs/kzt"}, "out_sum_kzt": {"$ref": "#/$defs/kzt"},
+        "n_tx_in": {"$ref": "#/$defs/count"}, "n_tx_out": {"$ref": "#/$defs/count"},
+        "out_in_ratio": {"type": ["number", "null"]}
+      }
+    },
+    "node": {
+      "type": "object", "additionalProperties": false,
+      "required": ["gid", "role", "role_score", "cluster_id", "priority_score", "evidence", "depth", "is_seed", "metrics", "limitations"],
+      "properties": {
+        "gid": {"$ref": "#/$defs/gid"}, "role": {"$ref": "#/$defs/role"},
+        "role_score": {"$ref": "#/$defs/score"}, "cluster_id": {"type": "integer"},
+        "priority_score": {"$ref": "#/$defs/score"}, "evidence": {"type": "string", "minLength": 1, "maxLength": 200},
+        "depth": {"$ref": "#/$defs/count"}, "is_seed": {"type": "boolean"},
+        "metrics": {"$ref": "#/$defs/metrics"}, "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "edge": {
+      "type": "object", "additionalProperties": false,
+      "required": ["src", "dst", "sum_kzt", "n_tx", "depth"],
+      "properties": {
+        "src": {"$ref": "#/$defs/gid"}, "dst": {"$ref": "#/$defs/gid"},
+        "sum_kzt": {"$ref": "#/$defs/kzt"}, "n_tx": {"$ref": "#/$defs/count"}, "depth": {"$ref": "#/$defs/count"}
+      }
+    },
+    "cluster": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cluster_id", "n_nodes", "n_seed", "sum_kzt_internal", "top_gids", "hypothesis"],
+      "properties": {
+        "cluster_id": {"type": "integer"}, "n_nodes": {"$ref": "#/$defs/count"}, "n_seed": {"$ref": "#/$defs/count"},
+        "sum_kzt_internal": {"$ref": "#/$defs/kzt"}, "top_gids": {"type": "array", "items": {"$ref": "#/$defs/gid"}},
+        "hypothesis": {"$ref": "#/$defs/text"}
+      }
+    },
+    "topNode": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rank", "gid", "role", "priority_score", "why"],
+      "properties": {
+        "rank": {"type": "integer", "minimum": 1}, "gid": {"$ref": "#/$defs/gid"},
+        "role": {"$ref": "#/$defs/role"}, "priority_score": {"$ref": "#/$defs/score"}, "why": {"$ref": "#/$defs/text"}
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "money-graph"
+version = "0.1.0"
+description = "Local Money Graph analytics CLI scaffold"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas==3.0.6",
+    "pyarrow==25.0.1",
+    "networkx==3.7",
+]
+
+[project.scripts]
+money-graph = "money_graph.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

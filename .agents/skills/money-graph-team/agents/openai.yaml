@@ -1,0 +1,6 @@
+interface:
+  display_name: "Money Graph — команда и ветки"
+  short_description: "Выбор участника, ветки и границ монорепозитория"
+  default_prompt: "Используй $money-graph-team, уточни моё имя и подготовь работу в моей ветке проекта."
+policy:
+  allow_implicit_invocation: true

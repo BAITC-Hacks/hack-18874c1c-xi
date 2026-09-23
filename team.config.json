@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "members": {
+    "ilya": {"name": "Илья", "aliases": ["илья", "ilya", "ilia"], "branch": "ilya-branch-front", "paths": ["apps/web/"], "prompt": "docs/prompts/ilya-frontend.md"},
+    "yerasyl": {"name": "Ерасыл", "aliases": ["ерасыл", "yerasyl", "erasyl"], "branch": "yerasyl-branch-back", "paths": ["apps/api/"], "prompt": "docs/prompts/erasyl-backend.md"},
+    "rodion": {"name": "Родион", "aliases": ["родион", "rodion"], "branch": "rodion-branch-analytics", "paths": ["analytics/"], "prompt": "docs/prompts/analyst.md"}
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "money-graph",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/web", "apps/api", "packages/contracts"],
+  "engines": {"node": ">=24 <27", "npm": ">=11 <12"},
+  "scripts": {
+    "team:start": "node scripts/team.mjs start",
+    "team:check": "node scripts/team.mjs check",
+    "check:structure": "node scripts/check-structure.mjs",
+    "build:contracts": "npm run build --workspace @money-graph/contracts",
+    "build": "npm run check:structure && npm run build:contracts && npm run build --workspace @money-graph/api && npm run build --workspace @money-graph/web",
+    "typecheck": "npm run build:contracts && npm run typecheck --workspaces --if-present",
+    "dev:web": "npm run dev --workspace @money-graph/web",
+    "dev:api": "npm run dev --workspace @money-graph/api",
+    "test": "node --test scripts/tests/*.test.mjs && npm run build:contracts && npm run test --workspace @money-graph/api",
+    "compose:up": "docker compose up --build --wait",
+    "compose:down": "docker compose down"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

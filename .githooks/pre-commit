@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+node scripts/team.mjs check
+node scripts/check-structure.mjs
