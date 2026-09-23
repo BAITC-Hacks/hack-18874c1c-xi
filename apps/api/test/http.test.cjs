@@ -17,13 +17,12 @@ after(async () => {
   await app?.close();
 });
 
-test('health reports a running API and an explicitly unfinished analytics pipeline', async () => {
+test('health reports HTTP availability without claiming analytics readiness', async () => {
   const response = await fetch(`${baseUrl}/api/health`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     status: 'ok',
     service: 'api',
-    analytics: 'not_implemented',
   });
 });
 
