@@ -3,8 +3,9 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Money Graph — каркас проекта",
-  description: "Рабочий каркас системы анализа графа переводов.",
+  title: "Money Graph — исследование переводов",
+  description: "Карта наблюдаемых переводов, роли узлов и объяснения приоритетов проверки.",
+  icons: { icon: "/xi-mark-ink-on-volt.svg" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

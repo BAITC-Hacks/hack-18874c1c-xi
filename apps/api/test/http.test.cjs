@@ -17,17 +17,16 @@ after(async () => {
   await app?.close();
 });
 
-test('health reports a running API and an explicitly unfinished analytics pipeline', async () => {
+test('health reports HTTP availability without claiming analytics readiness', async () => {
   const response = await fetch(`${baseUrl}/api/health`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     status: 'ok',
     service: 'api',
-    analytics: 'not_implemented',
   });
 });
 
-test('all planned pipeline endpoints return 501, never fabricated results', async (t) => {
+test('unknown runs return 404 and an incomplete upload returns 400', async (t) => {
   for (const [method, path] of [
     ['POST', '/api/runs'],
     ['GET', '/api/runs/example'],
@@ -37,8 +36,8 @@ test('all planned pipeline endpoints return 501, never fabricated results', asyn
     await t.test(`${method} ${path}`, async () => {
       const response = await fetch(`${baseUrl}${path}`, { method });
       const body = await response.json();
-      assert.equal(response.status, 501);
-      assert.equal(body.error.code, 'PIPELINE_NOT_IMPLEMENTED');
+      assert.equal(response.status, method === 'POST' ? 400 : 404);
+      assert.equal(typeof body.error.code, 'string');
       assert.equal(typeof body.error.message, 'string');
       assert.equal(Object.hasOwn(body, 'run_id'), false);
     });

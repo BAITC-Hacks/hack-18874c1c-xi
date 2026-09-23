@@ -21,12 +21,15 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run check:structure
       - run: npm test
+      - run: npm run test:web
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
       - run: npm run typecheck
+      - run: npm run typecheck:acceptance
       - run: python -m pip install -r analytics/requirements.lock
       - run: python -m pip install --no-deps -e ./analytics
       - run: python -m unittest discover -s analytics/tests -v
+      - run: python -m unittest discover -s scripts/acceptance -p 'test_*.py' -v
       - run: python -m money_graph --check-environment
       - run: docker compose config --quiet

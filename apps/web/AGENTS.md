@@ -11,5 +11,15 @@
 - Идентификаторы int64 поступают строками; не преобразовывай их в `Number`. Аналитика и экспорт остаются в Python.
 - Инициализируй Cytoscape на клиенте. Не перезапускай раскладку графа при каждом React-рендере.
 - Не используй внешние шрифты, CDN или скрытую подмену реальных результатов моками.
-- Текущий интерфейс — рабочий каркас с проверкой `/api/health`; анализ данных ещё не реализован. Не выдавай доступность API за готовность обязательного сценария.
+- Интерфейс загрузки, графа, поиска, карточек, топа и скачивания реализован и объединён с API/CLI. Проверки fixture не заменяют сквозной браузерный сценарий на настоящих Parquet; не выдавай доступность API или успешную сборку за полную приёмку.
 - После изменений запускай доступные проверки типов и сборку. Сообщай фактические результаты и непроверенные пункты.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

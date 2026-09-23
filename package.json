@@ -14,10 +14,14 @@
     "dev:web": "npm run dev --workspace @money-graph/web",
     "dev:api": "npm run dev --workspace @money-graph/api",
     "test": "node --test scripts/tests/*.test.mjs && npm run build:contracts && npm run test --workspace @money-graph/api",
+    "test:web": "node --import tsx --test apps/web/tests/*.test.ts",
+    "test:acceptance": "node scripts/acceptance/run.mjs",
+    "typecheck:acceptance": "tsc --noEmit --skipLibCheck --strict --esModuleInterop --module nodenext --moduleResolution nodenext --target es2022 scripts/acceptance/browser.spec.ts scripts/acceptance/playwright.config.ts",
     "compose:up": "docker compose up --build --wait",
     "compose:down": "docker compose down"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "24.13.6",
     "tsx": "4.23.15",
     "typescript": "5.9.3"
