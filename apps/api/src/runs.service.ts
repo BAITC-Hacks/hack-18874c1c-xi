@@ -44,7 +44,7 @@ export class RunsService implements OnModuleDestroy {
     timer.unref();
     try {
       await mkdir(inputDir, { recursive: true });
-      await mkdir(outputDir);
+      // Python publishes its staged directory here; Windows requires an absent destination.
       await receiveUpload(request, response, inputDir, this.config.uploadMaxBytes, active.abort.signal);
       if (active.abort.signal.aborted) throw new Error('Upload interrupted.');
     } catch (error) {

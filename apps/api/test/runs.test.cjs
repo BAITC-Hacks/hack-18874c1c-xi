@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { mkdtemp, readFile, readdir, rm, writeFile } = require('node:fs/promises');
+const { existsSync } = require('node:fs');
 const http = require('node:http');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -24,7 +25,8 @@ async function setup(t, overrides = {}) {
     child.stdout = new PassThrough();
     child.stderr = new PassThrough();
     child.kill = (signal) => { setImmediate(() => child.emit('close', null, signal)); return true; };
-    processes.push({ command, args, options, child });
+    const outputDir = args[args.indexOf('--output-dir') + 1];
+    processes.push({ command, args, options, child, outputExistsAtSpawn: existsSync(outputDir) });
     return child;
   };
   const app = await createApp({ webOrigin: 'http://localhost:3000', logger: false,
@@ -106,6 +108,17 @@ test('parallel POSTs start exactly one process', async (t) => {
   assert.equal(api.processes.length, 1);
 });
 
+test('leaves the output path absent so Python can publish atomically on Windows too', async (t) => {
+  const api = await setup(t);
+  const response = await api.post();
+  assert.equal(response.status, 202);
+  const { run_id } = await response.json();
+  assert.equal(api.processes.length, 1);
+  assert.equal(api.processes[0].outputExistsAtSpawn, false);
+  await assert.rejects(readdir(join(api.runsDir, run_id, 'output')), { code: 'ENOENT' });
+  assert.equal((await fetch(`${api.base}/runs/${run_id}/result`)).status, 409);
+});
+
 test('a successful exit with missing artifacts fails and releases the slot', async (t) => {
   const api = await setup(t);
   const response = await api.post();
@@ -143,7 +156,7 @@ test('publishes only after close and validation, preserving exact JSON and origi
   assert.deepEqual(Buffer.from(await (await fetch(`${api.base}/runs/${run_id}/exports/clusters.csv`)).arrayBuffer()), original);
   const next = await (await api.post()).json();
   assert.notEqual(next.run_id, run_id);
-  assert.deepEqual(await readdir(join(api.runsDir, next.run_id, 'output')), []);
+  await assert.rejects(readdir(join(api.runsDir, next.run_id, 'output')), { code: 'ENOENT' });
   api.processes[1].child.emit('close', 0, null);
   assert.equal((await terminal(api.base, next.run_id)).status, 'failed');
   assert.equal((await fetch(`${api.base}/runs/${next.run_id}/result`)).status, 409);
