@@ -3,6 +3,7 @@
 import copy
 import csv
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -261,7 +262,60 @@ class OutputTests(unittest.TestCase):
             target = Path(directory) / "empty"
             target.mkdir()
             write_outputs(snapshot_fixture(), target)
-            self.assertTrue((target / "analysis.json").is_file())
+            self.assertEqual(set(path.name for path in target.iterdir()), {*CSV_COLUMNS, "analysis.json"})
+            self.assertEqual(json.loads((target / "analysis.json").read_text(encoding="utf-8")),
+                             snapshot_fixture())
+
+    @unittest.skipUnless(os.name == "nt", "Windows directory publication fallback")
+    def test_windows_retry_failure_restores_empty_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "empty"
+            target.mkdir()
+            with patch("money_graph.output.os.rename", side_effect=[
+                FileExistsError("destination exists"), OSError("retry failed"),
+            ]):
+                with self.assertRaisesRegex(OutputError, "retry failed"):
+                    write_outputs(snapshot_fixture(), target)
+            self.assertTrue(target.is_dir())
+            self.assertEqual(list(target.iterdir()), [])
+            self.assertEqual(list(Path(directory).iterdir()), [target])
+
+    @unittest.skipUnless(os.name == "nt", "Windows directory publication fallback")
+    def test_windows_retry_preserves_concurrently_created_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "empty"
+            target.mkdir()
+            rename = os.rename
+
+            def publish(source, destination):
+                if not target.exists():
+                    target.write_text("concurrent result")
+                return rename(source, destination)
+
+            with patch("money_graph.output.os.rename", side_effect=publish):
+                with self.assertRaises(OutputError):
+                    write_outputs(snapshot_fixture(), target)
+            self.assertTrue(target.is_file())
+            self.assertEqual(target.read_text(), "concurrent result")
+            self.assertEqual(list(Path(directory).iterdir()), [target])
+
+    @unittest.skipUnless(os.name == "nt", "Windows directory publication fallback")
+    def test_windows_never_removes_directory_filled_before_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "empty"
+            target.mkdir()
+            rmdir = Path.rmdir
+
+            def remove(path):
+                if path == target:
+                    (target / "concurrent.txt").write_text("untouched")
+                return rmdir(path)
+
+            with patch.object(Path, "rmdir", remove):
+                with self.assertRaises(OutputError):
+                    write_outputs(snapshot_fixture(), target)
+            self.assertEqual((target / "concurrent.txt").read_text(), "untouched")
+            self.assertEqual(list(Path(directory).iterdir()), [target])
 
     def test_repeat_write_preserves_previous_result(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -272,25 +326,43 @@ class OutputTests(unittest.TestCase):
                 write_outputs(connected_fixture(), target)
             self.assertEqual(before, {path.name: path.read_bytes() for path in target.iterdir()})
 
-    def test_nonempty_input_directory_file_and_symlink_are_refused(self):
+    def test_nonempty_input_directory_and_file_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "nodes.parquet").write_bytes(b"untouched")
             file = root / "file"
             file.write_text("untouched")
-            empty = root / "empty"
-            empty.mkdir()
-            link = root / "link"
-            link.symlink_to(empty, target_is_directory=True)
-            dangling = root / "dangling"
-            dangling.symlink_to(root / "missing", target_is_directory=True)
-            for target in (root, file, link, dangling):
+            for target in (root, file):
                 with self.subTest(target=target), self.assertRaises(OutputError):
                     write_outputs(snapshot_fixture(), target)
             self.assertEqual((root / "nodes.parquet").read_bytes(), b"untouched")
             self.assertEqual(file.read_text(), "untouched")
+
+    def test_directory_symlink_is_refused(self):
+        self._assert_symlink_refused(dangling=False)
+
+    def test_dangling_symlink_is_refused(self):
+        self._assert_symlink_refused(dangling=True)
+
+    def _assert_symlink_refused(self, *, dangling):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            destination = root / "destination"
+            if not dangling:
+                destination.mkdir()
+            link = root / "link"
+            try:
+                link.symlink_to(destination, target_is_directory=True)
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows account lacks symlink privilege; run this check in Docker/Linux")
+                raise
+            with self.assertRaisesRegex(OutputError, "symlinks are not allowed"):
+                write_outputs(snapshot_fixture(), link)
             self.assertTrue(link.is_symlink())
-            self.assertEqual(list(empty.iterdir()), [])
+            self.assertEqual(set(root.iterdir()), {link} if dangling else {link, destination})
+            if not dangling:
+                self.assertEqual(list(destination.iterdir()), [])
 
     def test_invalid_snapshot_never_creates_target(self):
         with tempfile.TemporaryDirectory() as directory:

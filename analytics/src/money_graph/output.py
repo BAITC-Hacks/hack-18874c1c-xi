@@ -298,13 +298,35 @@ def _verify_files(snapshot, directory):
             _same(list(reader), list(_csv_rows(restored, filename)), f"{filename} readback")
 
 
+def _publish_directory(temporary, target):
+    try:
+        os.rename(temporary, target)
+    except FileExistsError:
+        if os.name != "nt":
+            raise
+        # Windows cannot rename over even an empty directory. Recheck before
+        # removing it; rmdir also refuses a directory filled in the meantime.
+        _check_target(target)
+        target.rmdir()
+        try:
+            os.rename(temporary, target)
+        except OSError:
+            try:
+                target.mkdir()
+            except FileExistsError:
+                pass  # Never replace a path another process created meanwhile.
+            raise
+
+
 def write_outputs(snapshot: dict, output_dir: Path) -> None:
     """Publish checked JSON and three CSV files, never replacing previous output.
 
 Files are first written and read back in a fresh sibling directory on the same
 filesystem. A POSIX directory rename publishes all four together; an existing
 empty target is supported, but a nonempty directory, file or symlink is refused.
-The temporary directory is removed on failure, never the requested destination.
+On Windows an existing empty target is removed just before renaming, then
+recreated if publication fails. Nonempty destinations are never removed.
+The temporary directory is removed on failure.
     """
     validate_snapshot(snapshot)
     target = Path(output_dir).absolute()
@@ -327,7 +349,7 @@ The temporary directory is removed on failure, never the requested destination.
                 os.fsync(handle.fileno())
         _verify_files(snapshot, temporary)
         _check_target(target)
-        os.rename(temporary, target)
+        _publish_directory(temporary, target)
         temporary = None
     except (OSError, UnicodeError, csv.Error, json.JSONDecodeError) as error:
         raise OutputError(f"Cannot publish output files: {error}") from error
