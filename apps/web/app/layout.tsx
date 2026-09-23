@@ -5,6 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Money Graph — исследование переводов",
   description: "Карта наблюдаемых переводов, роли узлов и объяснения приоритетов проверки.",
+  icons: { icon: "/xi-mark-ink-on-volt.svg" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
