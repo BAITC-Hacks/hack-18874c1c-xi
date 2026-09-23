@@ -5,6 +5,6 @@ import type { HealthResponse } from '@money-graph/contracts';
 export class HealthController {
   @Get()
   getHealth(): HealthResponse {
-    return { status: 'ok', service: 'api', analytics: 'not_implemented' };
+    return { status: 'ok', service: 'api' };
   }
 }
