@@ -2,23 +2,32 @@
   "name": "@money-graph/api",
   "version": "0.1.0",
   "private": true,
-  "description": "Money Graph NestJS API scaffold",
+  "description": "Money Graph NestJS API and Python CLI integration",
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.cjs"
+    "test": "npm run build && node --test test/*.test.cjs",
+    "test:python": "npm run build && node --test test/python-cli.integration.cjs",
+    "test:dataset": "npm run build && node --test test/dataset.integration.cjs"
   },
   "dependencies": {
     "@money-graph/contracts": "0.1.0",
     "@nestjs/common": "12.1.0",
     "@nestjs/core": "12.1.0",
     "@nestjs/platform-express": "12.1.0",
+    "ajv": "8.17.1",
+    "csv-parse": "5.6.0",
+    "multer": "2.4.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2"
   },
   "engines": {
     "node": ">=24 <25"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "@types/multer": "2.0.0"
   }
 }
